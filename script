@@ -1,0 +1,106 @@
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.0;
+
+contract RockPaperScissors {
+    //  события
+    event GameCreated(address indexed creator, address indexed opponent, uint256 wager);
+    event GameResult(address indexed winner, address indexed loser, string result);
+
+    // Перечисление возможных ходов
+    enum Move { None, Rock, Paper, Scissors }
+
+    struct Game {
+        address player1;
+        address player2;
+        uint256 wager;
+        Move player1Move;
+        Move player2Move;
+        bool isActive;
+    }
+
+    mapping(uint256 => Game) public games;
+    uint256 public gameCount;
+
+    // Модификатор для проверки, что игрок является участником игры
+    modifier onlyParticipant(uint256 gameId) {
+        require(msg.sender == games[gameId].player1 || msg.sender == games[gameId].player2, "You are not a participant.");
+        _;
+    }
+
+    // Модификатор для проверки, что ход был сделан
+    modifier moveNotMade(uint256 gameId) {
+        if (msg.sender == games[gameId].player1) {
+            require(games[gameId].player1Move == Move.None, "Move already made.");
+        } else {
+            require(games[gameId].player2Move == Move.None, "Move already made.");
+        }
+        _;
+    }
+
+    // Создание игры
+    function createGame(address opponent) external payable {
+        require(msg.value > 0, "Wager must be greater than 0.");
+
+        gameCount++;
+        games[gameCount] = Game({
+            player1: msg.sender,
+            player2: opponent,
+            wager: msg.value,
+            player1Move: Move.None,
+            player2Move: Move.None,
+            isActive: true
+        });
+
+        emit GameCreated(msg.sender, opponent, msg.value);
+    }
+
+    // Сделать ход
+    function makeMove(uint256 gameId, Move move) external onlyParticipant(gameId) moveNotMade(gameId) {
+        require(move == Move.Rock || move == Move.Paper || move == Move.Scissors, "Invalid move.");
+        Game storage game = games[gameId];
+
+        if (msg.sender == game.player1) {
+            game.player1Move = move;
+        } else {
+            game.player2Move = move;
+        }
+
+        // Если оба игрока сделали ход, определяем результат
+        if (game.player1Move != Move.None && game.player2Move != Move.None) {
+            determineWinner(gameId);
+        }
+    }
+
+    // Определение победителя
+    function determineWinner(uint256 gameId) internal {
+        Game storage game = games[gameId];
+        require(game.isActive, "Game is not active.");
+
+        string memory result;
+        address winner;
+        address loser;
+
+        if (game.player1Move == game.player2Move) {
+            result = "Draw";
+            payable(game.player1).transfer(game.wager / 2);
+            payable(game.player2).transfer(game.wager / 2);
+        } else if (
+            (game.player1Move == Move.Rock && game.player2Move == Move.Scissors) ||
+            (game.player1Move == Move.Paper && game.player2Move == Move.Rock) ||
+            (game.player1Move == Move.Scissors && game.player2Move == Move.Paper)
+        ) {
+            result = "Player 1 Wins";
+            winner = game.player1;
+            loser = game.player2;
+            payable(game.player1).transfer(game.wager);
+        } else {
+            result = "Player 2 Wins";
+            winner = game.player2;
+            loser = game.player1;
+            payable(game.player2).transfer(game.wager);
+        }
+
+        game.isActive = false;
+        emit GameResult(winner, loser, result);
+    }
+}

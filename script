@@ -2,8 +2,10 @@
 pragma solidity ^0.8.0;
 
 contract RockPaperScissors {
-    //  события
+    // события
     event GameCreated(address indexed creator, address indexed opponent, uint256 wager);
+    event CommitMade(address indexed player, uint256 gameId, bytes32 commitment);
+    event RevealMade(address indexed player, uint256 gameId, Move move);
     event GameResult(address indexed winner, address indexed loser, string result);
 
     // Перечисление возможных ходов
@@ -13,7 +15,9 @@ contract RockPaperScissors {
         address player1;
         address player2;
         uint256 wager;
-        Move player1Move;
+        bytes32 player1Commit; // Хеш от хода и случайного значения
+        bytes32 player2Commit;
+        Move player1Move; // Раскрытый ход
         Move player2Move;
         bool isActive;
     }
@@ -27,13 +31,15 @@ contract RockPaperScissors {
         _;
     }
 
-    // Модификатор для проверки, что ход был сделан
-    modifier moveNotMade(uint256 gameId) {
-        if (msg.sender == games[gameId].player1) {
-            require(games[gameId].player1Move == Move.None, "Move already made.");
-        } else {
-            require(games[gameId].player2Move == Move.None, "Move already made.");
-        }
+    // для проверки фазы commit
+    modifier commitPhase(uint256 gameId) {
+        require(games[gameId].player1Commit == 0 || games[gameId].player2Commit == 0, "Both players have committed.");
+        _;
+    }
+
+    // для проверки фазы reveal
+    modifier revealPhase(uint256 gameId) {
+        require(games[gameId].player1Commit != 0 && games[gameId].player2Commit != 0, "Commit phase not completed.");
         _;
     }
 
@@ -46,6 +52,8 @@ contract RockPaperScissors {
             player1: msg.sender,
             player2: opponent,
             wager: msg.value,
+            player1Commit: 0,
+            player2Commit: 0,
             player1Move: Move.None,
             player2Move: Move.None,
             isActive: true
@@ -54,18 +62,38 @@ contract RockPaperScissors {
         emit GameCreated(msg.sender, opponent, msg.value);
     }
 
-    // Сделать ход
-    function makeMove(uint256 gameId, Move move) external onlyParticipant(gameId) moveNotMade(gameId) {
-        require(move == Move.Rock || move == Move.Paper || move == Move.Scissors, "Invalid move.");
+    // Commit ход
+    function commitMove(uint256 gameId, bytes32 commitment) external onlyParticipant(gameId) commitPhase(gameId) {
         Game storage game = games[gameId];
 
         if (msg.sender == game.player1) {
+            require(game.player1Commit == 0, "Move already committed.");
+            game.player1Commit = commitment;
+        } else {
+            require(game.player2Commit == 0, "Move already committed.");
+            game.player2Commit = commitment;
+        }
+
+        emit CommitMade(msg.sender, gameId, commitment);
+    }
+
+    // Reveal ход
+    function revealMove(uint256 gameId, Move move, string memory salt) external onlyParticipant(gameId) revealPhase(gameId) {
+        require(move == Move.Rock || move == Move.Paper || move == Move.Scissors, "Invalid move.");
+        Game storage game = games[gameId];
+
+        bytes32 commitment = keccak256(abi.encodePacked(move, salt));
+        if (msg.sender == game.player1) {
+            require(commitment == game.player1Commit, "Commitment does not match.");
             game.player1Move = move;
         } else {
+            require(commitment == game.player2Commit, "Commitment does not match.");
             game.player2Move = move;
         }
 
-        // Если оба игрока сделали ход, определяем результат
+        emit RevealMade(msg.sender, gameId, move);
+
+        // Если оба игрока раскрыли ходы, определяем результат
         if (game.player1Move != Move.None && game.player2Move != Move.None) {
             determineWinner(gameId);
         }
